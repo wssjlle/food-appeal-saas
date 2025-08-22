@@ -4,10 +4,8 @@
     "food-appeal-api": {
       "directory": "backend",
       "build": {
-        "command": "pip install -r requirements.txt"
-      },
-      "run": {
-        "command": "python app.py"
+        "context": "./backend",
+        "dockerfile": "./backend/Dockerfile"
       },
       "port": 5000,
       "environment": {
