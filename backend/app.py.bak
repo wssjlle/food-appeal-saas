@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import base64
@@ -51,7 +53,7 @@ def process_image():
             return jsonify({"error": "Erro na API do Gemini", "details": response.text}), response.status_code
 
         result = response.json()
-        descricao = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sem descrição")
+        descricao = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "Sem descriÃ§Ã£o")
 
         return jsonify({
             "status": "success",
