@@ -102,7 +102,7 @@ def process_image():
 
         result = response.json()
 		print("DEBUG: Resposta bruta da API do Gemini:")
-print(result) # Ou use logging.info(result)
+		print(result) # Ou use logging.info(result)
 
         # 6. Extrair dados da imagem gerada
         candidates = result.get("candidates", [])
