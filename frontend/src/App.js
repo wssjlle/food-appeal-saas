@@ -10,79 +10,75 @@ function App() {
   const [error, setError] = useState('');
   const [downloadUrl, setDownloadUrl] = useState(''); // State for download URL
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setResult(null);
-    setDownloadUrl(''); // Clear previous download URL
+  // ... (dentro de App.js, na função handleSubmit)
 
-    if (!image) {
-      setError('Por favor, selecione uma imagem');
-      setLoading(false);
-      return;
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setLoading(true);
+  setError('');
+  setResult(null); // Limpa resultado anterior
+
+  const formData = new FormData();
+  formData.append('image', image);
+  formData.append('prompt', prompt);
+
+  try {
+    // IMPORTANTE: Mantenha responseType como 'blob' para lidar com imagens E texto.
+    const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/process`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      // Tentar ler o erro como JSON
+      let errorMsg = `Erro ${res.status}`;
+      try {
+        const errorData = await res.json();
+        errorMsg = errorData.error || errorMsg;
+      } catch (e) {
+        // Se não for JSON, ler como texto
+        errorMsg = await res.text();
+      }
+      throw new Error(errorMsg);
     }
 
-    const formData = new FormData();
-    formData.append('image', image);
-    formData.append('prompt', prompt);
+    // Verificar o tipo de conteúdo da resposta
+    const contentType = res.headers.get('content-type');
 
-    try {
-      // Important: Use 'blob' to receive binary image data
-      const res = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/process`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        let errorMsg = `Erro ${res.status}`;
-        try {
-          const errorData = await res.json();
-          errorMsg = errorData.error || errorMsg;
-        } catch (e) {
-          // If not JSON, read as text
-          errorMsg = await res.text();
-        }
-        throw new Error(errorMsg);
-      }
-
-      // Check content type
-      const contentType = res.headers.get('content-type');
-      if (contentType && contentType.indexOf('application/json') !== -1) {
-        // If backend returns JSON (e.g., error message or text response)
+    if (contentType && contentType.indexOf('application/json') !== -1) {
+        // Se for JSON (ex: mensagem de "nenhuma imagem gerada" ou erro)
         const data = await res.json();
-        setResult(data);
-        console.log("Backend returned JSON:", data); // Log for debugging
-      } else {
-        // Assume it's the image blob
-        const blob = await res.blob();
+        setResult(data); // Mostra a mensagem JSON
+        console.log("Backend retornou JSON:", data); // Log para debug
+    } else {
+        // Se NÃO for JSON, assume que é um 'blob' (potencialmente uma imagem binária)
+        const blob = await res.blob(); // <-- CORREÇÃO AQUI
 
-        // Create a download URL for the blob
+        // Criar URL para o blob
         const imageUrl = URL.createObjectURL(blob);
-        setDownloadUrl(imageUrl); // Set the URL for potential download
 
-        // Display the image in the result section
-        setResult({ imageUrl: imageUrl, isImage: true });
-
-        // --- Optional: Force automatic download ---
+        // === Opção 1: Forçar Download ===
         // const link = document.createElement('a');
         // link.href = imageUrl;
-        // link.download = 'imagem_editada.png'; // Suggested filename
+        // link.download = 'imagem_editada.png'; // Nome do arquivo
         // document.body.appendChild(link);
         // link.click();
         // document.body.removeChild(link);
-        // URL.revokeObjectURL(imageUrl); // Clean up
-        // ----------------------------
+        // URL.revokeObjectURL(imageUrl); // Limpar URL
 
-      }
-
-    } catch (err) {
-      console.error("Fetch error:", err); // Log detailed error
-      setError(err.message);
-    } finally {
-      setLoading(false);
+        // === Opção 2: Mostrar no navegador (preferido) ===
+        setResult({ imageUrl: imageUrl, isImage: true });
+        // =============================================
     }
-  };
+
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// ... (restante do App.js)
 
   return (
     <div className="App">
@@ -128,45 +124,36 @@ function App() {
           </div>
         )}
 
-        {result && (
-          <div className="result-section">
-            <h2>Resultado</h2>
-            <div className="result-content">
-              {result.isImage ? (
-                <div>
-                  <h3>Imagem Gerada:</h3>
-                  {/* Display loading indicator if image is still loading */}
-                  {loading ? (
-                     <p>Carregando imagem...</p>
-                   ) : (
-                     <>
-                       <img src={result.imageUrl} alt="Imagem Editada" style={{ maxWidth: '100%', height: 'auto' }} />
-                       {/* Optional: Add a download button */}
-                       <a href={downloadUrl} download="imagem_editada.png">
-                         <button type="button">Baixar Imagem</button>
-                       </a>
-                     </>
-                   )}
-                </div>
-              ) : result.imageUrl ? (
-                // Case where imageUrl was set for download (if auto-download was used)
-                <p>{result.message}</p>
-              ) : result.texto ? (
-                // If backend returns text (unlikely with new setup, but possible error response)
-                <div className="result-text">
-                  <h3>Resposta do Modelo:</h3>
-                  <p>{result.texto}</p>
-                </div>
-              ) : (
-                // General result display (e.g., JSON messages)
-                <div className="result-text">
-                  <h3>Mensagem:</h3>
-                  <pre>{JSON.stringify(result, null, 2)}</pre>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+         {/* Dentro do render do App.js, onde mostra o resultado */}
+ {result && (
+  <div className="result-section">
+    <h2>Resultado</h2>
+    <div className="result-content">
+      {result.isImage ? (
+        <div>
+          <h3>Imagem Gerada:</h3>
+          <img src={result.imageUrl} alt="Imagem Editada" style={{ maxWidth: '100%', height: 'auto' }} />
+          {/* Opcional: Adicionar botão para download novamente */}
+          <a href={result.imageUrl} download="imagem_editada.png">
+            <button type="button">Baixar Imagem</button>
+          </a>
+        </div>
+       ) : result.imageUrl ? ( // Caso tenha imageUrl de download forçado
+         <p>{result.message}</p>
+       ) : result.texto ? (
+         <div className="result-text">
+           <h3>Resposta do Modelo:</h3>
+           <p>{result.texto}</p>
+         </div>
+       ) : (
+         <div className="result-text">
+           <h3>Mensagem:</h3>
+           <pre>{JSON.stringify(result, null, 2)}</pre>
+         </div>
+       )}
+    </div>
+  </div>
+ )}
       </main>
 
       <footer className="App-footer">
