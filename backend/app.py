@@ -8,6 +8,9 @@ import json
 from dotenv import load_dotenv
 import io
 
+# -*- coding: utf-8 -*-
+# ... (imports: Flask, request, jsonify, Response, CORS, base64, requests, os, load_dotenv - remain the same) ...
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -49,7 +52,7 @@ def process_image():
         mime_type = image_file.content_type or "image/jpeg" # Assume JPEG if not specified
 
         # 3. Montar payload para o Gemini
-        # Crucially, we remove the 'generationConfig' with 'responseModalities'
+        # CRUCIAL CHANGE: Explicitly specify the EXACT required combination for this model
         payload = {
             "contents": [
                 {
@@ -68,8 +71,11 @@ def process_image():
                         }
                     ]
                 }
-            ]
-            # REMOVED generationConfig for responseModalities
+            ],
+            # CORRECTED generationConfig: MUST include both IMAGE and TEXT for this specific model
+            "generationConfig": {
+                "responseModalities": ["IMAGE", "TEXT"] # EXACT combination required by gemini-2.0-flash-preview-image-generation
+            }
         }
 
         # 4. Enviar requisição para a API do Gemini
@@ -155,6 +161,9 @@ def process_image():
     except Exception as e:
         print(f"[ERRO] Interno: {str(e)}") # Log detailed error server-side
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
+
+# ... (restante do app.py e if __name__ == '__main__': ...)
+
 
 # ... (restante do app.py e if __name__ == '__main__': ...)
 if __name__ == '__main__':
