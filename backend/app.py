@@ -63,16 +63,21 @@ def process_image():
                             }
                         },
                         {
-                            # Prompt de texto
-                            "text": prompt_text
+                            # Prompt de texto - MAIS EXPLÍCITO
+                            "text": f"Por favor, processe esta imagem e gere uma nova versão aprimorada. {prompt_text} Certifique-se de retornar a imagem diretamente."
                         }
                     ]
                 }
             ],
             # CORREÇÃO: Incluir ambas as modalidades TEXT e IMAGE
-            "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"] # <--- CHANGED HERE
-            }
+            # E solicitar explicitamente que a resposta seja uma imagem.
+            # A configuração pode variar; vamos tentar sem generationConfig primeiro
+            # e depois com uma configuração mais simples se necessário.
+            # "generationConfig": {
+            #     "responseModalities": ["TEXT", "IMAGE"] # <--- CHANGED HERE
+            # }
+            # Tentativa inicial: Remover generationConfig para ver se o modelo padrão gera imagem.
+            # Se não funcionar, podemos tentar adicionar generationConfig com apenas IMAGE.
         }
 
         # 4. Enviar requisição para a API do Gemini
@@ -161,6 +166,7 @@ def process_image():
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
 
 # ... (restante do app.py e if __name__ == '__main__': ...)
+
 
 
 # === Opção Alternativa: Endpoint para Streaming (Mais Complexo) ===
