@@ -26,6 +26,8 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID
 def home():
     return jsonify({"message": "FoodAppeal API - Imagens que Vendem"})
 
+# -*- coding: utf-8 -*-
+# ... (imports e setup anteriores permanecem os mesmos) ...
 @app.route('/process', methods=['POST'])
 def process_image():
     """
@@ -43,20 +45,18 @@ def process_image():
             return jsonify({"error": "Nenhuma imagem enviada"}), 400
 
         image_file = request.files['image']
-        # Provide a clearer prompt hinting at image output
-        prompt_text = request.form.get('prompt', 'Por favor, processe esta imagem e gere uma versão aprimorada, tornando-a mais saborosa e visualmente atraente. Retorne diretamente a imagem gerada.')
+        prompt_text = request.form.get('prompt', 'Deixe essa imagem mais saborosa.')
 
         # 2. Converter imagem para base64
         image_bytes = image_file.read()
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG if not specified
+        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG se não especificado
 
-        # 3. Montar payload para o Gemini
-        # CRUCIAL CHANGE: Explicitly specify the EXACT required combination for this model
+        # 3. Montar payload para o Gemini (formato específico do modelo de geração de imagem)
         payload = {
             "contents": [
                 {
-                    "role": "user",
+                    "role": "user", # Papel do conteúdo
                     "parts": [
                         {
                             # Imagem de entrada
@@ -66,26 +66,26 @@ def process_image():
                             }
                         },
                         {
-                            # Prompt de texto - MAIS EXPLÍCITO e sem mencionar texto na resposta
-                            "text": prompt_text
+                            # Prompt de texto - MAIS EXPLÍCITO
+                            "text": f"Por favor, processe esta imagem e gere uma versão aprimorada. {prompt_text} Certifique-se de retornar a imagem diretamente."
                         }
                     ]
                 }
             ],
-            # CORRECTED generationConfig: MUST include both IMAGE and TEXT for this specific model
+            # Solicitar explicitamente que a resposta seja uma imagem e texto.
             "generationConfig": {
-                "responseModalities": ["IMAGE", "TEXT"] # EXACT combination required by gemini-2.0-flash-preview-image-generation
+                "responseModalities": ["IMAGE", "TEXT"] # CHANGED HERE - Exige ambas
             }
         }
 
         # 4. Enviar requisição para a API do Gemini
+        # Usar headers para garantir JSON
         headers = {'Content-Type': 'application/json'}
-        # Add a timeout for robustness
         response = requests.post(
             GEMINI_URL,
             json=payload,
             headers=headers,
-            timeout=90 # Increased timeout for image generation
+            timeout=90 # Timeout maior para geração de imagem
         )
 
         # 5. Tratar resposta
@@ -95,48 +95,48 @@ def process_image():
                 error_details = response.json()
                 error_msg += f" - Detalhes: {error_details}"
             except:
-                 # If response isn't JSON, get part of the text
-                error_msg += f" - Detalhes: {response.text[:500]}..."
-            print(f"[ERRO] Gemini API: {error_msg}") # Log server-side
+                error_msg += f" - Detalhes: {response.text[:500]}" # Primeiros 500 chars
+            print(f"Erro Gemini: {error_msg}") # Log para debug
             return jsonify({"error": error_msg}), response.status_code
 
         result = response.json()
-        print("DEBUG: Resposta bruta da API do Gemini:")
-        print(result) # Ou use logging.info(result)
 
-        # 6. Extrair dados da imagem gerada
+        # 6. Extrair dados da imagem gerada - ITERAÇÃO CORRIGIDA
+        # O modelo retorna um Candidate, que tem Content, que tem Parts
+        # Precisamos iterar por todos os parts para encontrar o inline_data (a imagem gerada)
         candidates = result.get("candidates", [])
         if not candidates:
              return jsonify({"error": "Nenhuma candidata retornada pela API do Gemini"}), 500
 
-        # Iterate through candidates and parts to find the generated image data
+        # Iterar pelos candidates e parts para encontrar a imagem gerada
         for candidate in candidates:
             content = candidate.get("content", {})
             parts = content.get("parts", [])
             for part in parts:
-                # Check if the part contains inline_data (the generated image)
+                # Verificar se a part contém inline_data (a imagem gerada)
                 if "inline_data" in part:
                     inline_data = part["inline_data"]
                     generated_image_data_base64 = inline_data.get("data")
-                    generated_image_mime_type = inline_data.get("mime_type", "image/png") # Default if not provided
+                    generated_image_mime_type = inline_data.get("mime_type", "image/png") # Default se não vier
 
                     if generated_image_data_base64:
                         # 7. Decodificar a imagem gerada
                         try:
                             generated_image_bytes = base64.b64decode(generated_image_data_base64)
                         except Exception as e:
-                            print(f"[ERRO] Decodificando imagem gerada: {e}")
+                            print(f"Erro ao decodificar imagem gerada: {e}")
                             return jsonify({"error": "Erro ao processar a imagem gerada"}), 500
 
                         # 8. Retornar a imagem como resposta HTTP
+                        # Usar flask.send_file seria ideal, mas vamos retornar os bytes diretamente com o tipo correto
                         return Response(
                             generated_image_bytes,
                             mimetype=generated_image_mime_type,
-                            headers={"Content-Disposition": "inline; filename=imagem_editada.png"}
+                            headers={"Content-Disposition": "inline; filename=imagem_editada.png"} # Nome sugerido
                         )
 
-        # Se chegou aqui, não encontrou imagem gerada na resposta
-        # Check for text response (though less likely with image generation model)
+        # Se chegou aqui, não encontrou imagem gerada na resposta imediata
+        # Verificar se há texto explicativo (pode vir antes da imagem em respostas futuras ou em caso de erro)
         texto_resposta = ""
         for candidate in candidates:
             content = candidate.get("content", {})
@@ -146,11 +146,11 @@ def process_image():
                     texto_resposta += part["text"] + " "
 
         if texto_resposta.strip():
-             print(f"[INFO] Resposta de texto recebida (sem imagem): {texto_resposta}")
+             print(f"Resposta de texto recebida (sem imagem imediata): {texto_resposta}")
              return jsonify({
                  "status": "success",
-                 "message": "Processamento concluído, mas nenhuma imagem foi gerada.",
-                 "texto": texto_resposta.strip()
+                 "message": "Processamento concluído. Verifique se a imagem foi gerada conforme solicitado.",
+                 "texto_descritivo": texto_resposta.strip() # Retorna o texto para contexto
              })
         else:
             return jsonify({"error": "Falha ao extrair a imagem gerada da resposta da API"}), 500
@@ -161,8 +161,10 @@ def process_image():
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Erro de conexão: {str(e)}"}), 500
     except Exception as e:
-        print(f"[ERRO] Interno: {str(e)}") # Log detailed error server-side
+        print(f"Erro interno: {str(e)}") # Log detalhado do erro
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
+
+# ... (restante do app.py e if __name__ == '__main__': ...)
 
 # ... (restante do app.py e if __name__ == '__main__': ...)
 
