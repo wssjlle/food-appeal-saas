@@ -23,6 +23,8 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID
 def home():
     return jsonify({"message": "FoodAppeal API - Imagens que Vendem"})
 
+# -*- coding: utf-8 -*-
+# ... (imports and setup remain the same) ...
 @app.route('/process', methods=['POST'])
 def process_image():
     """
@@ -45,7 +47,7 @@ def process_image():
         # 2. Converter imagem para base64
         image_bytes = image_file.read()
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG se não especificado
+        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG if not specified
 
         # 3. Montar payload para o Gemini (formato específico do modelo de geração de imagem)
         payload = {
@@ -67,9 +69,9 @@ def process_image():
                     ]
                 }
             ],
-            # Configuração para pedir resposta em imagem e texto (opcional, modelo pode inferir)
+            # CORREÇÃO: Incluir ambas as modalidades TEXT e IMAGE
             "generationConfig": {
-                "responseModalities": ["IMAGE"] # Pedir especificamente imagem (e talvez texto)
+                "responseModalities": ["TEXT", "IMAGE"] # <--- CHANGED HERE
             }
         }
 
@@ -157,6 +159,9 @@ def process_image():
     except Exception as e:
         print(f"Erro interno: {str(e)}") # Log detalhado do erro
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
+
+# ... (restante do app.py e if __name__ == '__main__': ...)
+
 
 # === Opção Alternativa: Endpoint para Streaming (Mais Complexo) ===
 # Se quiser implementar o streaming como no exemplo Python, seria necessário:
