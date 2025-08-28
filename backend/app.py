@@ -28,8 +28,6 @@ def home():
     return jsonify({"message": "FoodAppeal API - Imagens que Vendem"})
 
 # -*- coding: utf-8 -*-
-
-
 @app.route('/process', methods=['POST'])
 def process_image():
     """
