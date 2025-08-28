@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 # ... (imports e setup anteriores permanecem os mesmos) ...
 import io # Importar io para manipular buffers binários
-from flask import send_file, Response # Importar send_file e Response para retornar arquivos e streams
+from flask import Flask, request, jsonify, send_file, Response # Importar send_file e Response para retornar arquivos e streams
+from flask_cors import CORS
 import json
 import base64
 import requests
 import os
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
