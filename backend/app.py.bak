@@ -97,18 +97,19 @@ def process_image():
             print(f"[ERRO] Gemini API (Stream): {error_msg}") # Log server-side
             return jsonify({"error": error_msg}), response.status_code
 
-        # 6. Processar o stream
+        # 6. Processar o stream corretamente
         # A resposta é um stream de eventos Server-Sent Events (SSE) ou NDJSON.
         # Cada 'chunk' é uma linha JSON.
-        image_data_b64 = None
         accumulated_text = ""
-        full_response_data = [] # Armazenar chunks para depuração se necessário
+        image_data_b64 = None
 
         # Iterar sobre as linhas da resposta (chunks)
+        # response.iter_lines() é a maneira correta de lidar com SSE/NDJSON
         for line in response.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
-                full_response_data.append(decoded_line) # Armazenar para depuração
+                # Log para depuração (opcional, pode ser removido)
+                # print(f"[DEBUG] Linha recebida: {decoded_line[:100]}...")
                 try:
                     # Parsear cada linha como JSON
                     chunk_data = json.loads(decoded_line)
@@ -120,29 +121,29 @@ def process_image():
                         parts = content.get("parts", [])
                         for part in parts:
                             # Procurar por dados de imagem inline_data
-                            if "inline_data" in part:
+                            if "inline_data" in part and not image_data_b64:
+                                # Armazena apenas o PRIMEIRO pedaço de imagem encontrado
+                                # para evitar sobrescritas desnecessárias
                                 inline_data = part["inline_data"]
                                 image_data_b64 = inline_data.get("data")
                                 mime_type = inline_data.get("mime_type", "image/png")
                                 print("[INFO] Imagem encontrada no stream.")
-                                break # Sai dos loops internos se achar a imagem
-                        if image_data_b64:
-                            break
-                    if image_data_b64:
-                        break
+                                # Idealmente, paramos aqui, mas continuamos a iterar
+                                # para garantir que não há erros subsequentes.
+                                # break # Removido para continuar processando possíveis erros ou texto
 
-                    # Acumular texto, se houver (fallback)
-                    if not image_data_b64: # Só acumula texto se imagem ainda não foi encontrada
-                         for candidate in candidates:
-                            content = candidate.get("content", {})
-                            parts = content.get("parts", [])
-                            for part in parts:
-                                if "text" in part:
-                                    accumulated_text += part["text"]
+                            # Acumular texto, se houver (fallback)
+                            # Só acumula texto se imagem ainda não foi encontrada OU se for uma resposta de texto pura
+                            if "text" in part:
+                                 # Acumula texto mesmo que imagem tenha sido encontrada,
+                                 # pois a resposta pode ter partes de texto e imagem.
+                                 # Mas prioriza a imagem.
+                                accumulated_text += part["text"]
 
                 except json.JSONDecodeError as e:
                     print(f"[ERRO] Erro ao decodificar chunk JSON: {e}")
-                    print(f"[DEBUG] Linha problemática: {decoded_line}")
+                    print(f"[DEBUG] Linha problemática: {decoded_line[:100]}...")
+                    # Continuar iterando mesmo com erro em um chunk
                     continue # Ignorar linhas que não são JSON válidos
 
         # 7. Verificar se a imagem foi encontrada OU texto foi acumulado
@@ -178,8 +179,6 @@ def process_image():
                 )
             except Exception as e:
                 print(f"[ERRO] Erro ao decodificar ou enviar a imagem: {e}")
-                # Logar os dados brutos para depuração em caso de erro de decodificação
-                # print(f"[DEBUG] Dados da imagem (primeiros 100 chars): {image_data_b64[:100] if image_data_b64 else 'None'}")
                 return jsonify({"error": "Erro ao processar a imagem gerada"}), 500
         elif accumulated_text.strip():
             print(f"[INFO] Resposta de texto recebida (sem imagem): {accumulated_text}")
@@ -190,8 +189,7 @@ def process_image():
             })
         else:
             # Nenhum dado de imagem ou texto significativo encontrado
-            # Logar os dados brutos da resposta para depuração
-            print(f"[ERRO] Nenhum dado de imagem ou texto útil encontrado no stream. Dados brutos recebidos: {full_response_data[:2]}") # Mostrar apenas os 2 primeiros chunks
+            print("[ERRO] Nenhuma imagem ou texto útil encontrado no stream.")
             return jsonify({"error": "Falha ao extrair a imagem ou texto gerado da resposta da API Stream"}), 500
 
     except requests.exceptions.Timeout:
