@@ -107,55 +107,55 @@ def process_image():
             print(f"[ERRO] Gemini API (Stream): {error_msg}") # Log server-side
             return jsonify({"error": error_msg}), response.status_code
 
-            print("[INFO] Iniciando processamento do stream SSE...")
+        print("[INFO] Iniciando processamento do stream SSE...")
 
         # 6. Processar o stream SSE corretamente
         # A resposta é um stream de eventos Server-Sent Events (SSE).
-        # Cada evento tem um formato: " <conteúdo JSON>\n\n"
-        # Precisamos iterar e acumular os dados até encontrar "\n\n"
+        # Cada evento pode ser dividido em várias linhas 'data:'.
+        # Um evento termina com uma linha em branco (\n\n).
 
-        full_sse_event_data = ""
+        accumulated_event_data = "" # Acumula linhas 'data:' de um único evento
         image_data_buffers = [] # Lista para acumular partes da imagem se necessário
         accumulated_text = ""
-        finished = False
-        candidate_count = 0 # Contador para depuração
+        mime_type_detected = "image/png" # Default
 
         # Iterar sobre as linhas da resposta (chunks)
         # response.iter_lines() é a maneira correta de lidar com SSE/NDJSON
-        for line_index, line in enumerate(response.iter_lines()):
+        for line in response.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
-                print(f"[DEBUG] Linha recebida #{line_index}: {decoded_line[:100]}...") # Log da linha bruta
+                # print(f"[DEBUG] Linha recebida: {decoded_line[:50]}...")
 
                 if decoded_line.startswith(""):
-                    # Extrair o conteúdo JSON após ""
-                    json_data_str = decoded_line[5:].strip() # Remove "data:" e espaços
-                    print(f"[DEBUG] Conteúdo JSON extraído #{line_index}: {json_data_str[:100]}...")
+                    # Acumular o conteúdo JSON após ""
+                    json_data_part = decoded_line[5:].strip() # Remove "" e espaços
+                    accumulated_event_data += json_data_part
+                    # print(f"[DEBUG] Parte JSON acumulada: {json_data_part[:30]}... (Total: {len(accumulated_event_data)} chars)")
 
+            else:
+                # Linha vazia indica o fim de um evento SSE
+                if accumulated_event_data:
+                    print(f"[DEBUG] Evento SSE completo recebido. Tamanho acumulado: {len(accumulated_event_data)} chars")
                     try:
-                        # Decodificar o conteúdo como JSON
-                        chunk_data = json.loads(json_data_str)
-                        print(f"[DEBUG] Chunk JSON #{line_index} decodificado com sucesso.")
+                        # Decodificar o evento acumulado como JSON
+                        event_data = json.loads(accumulated_event_data)
+                        print("[DEBUG] Evento JSON decodificado com sucesso.")
 
-                        # Verificar se há candidatos
-                        candidates = chunk_data.get("candidates", [])
-                        print(f"[DEBUG] Número de candidatos no chunk #{line_index}: {len(candidates)}")
-                        for i, candidate in enumerate(candidates):
-                            candidate_count += 1
-                            print(f"[DEBUG] Processando candidato #{candidate_count} no chunk #{line_index}")
+                        # Processar o evento JSON decodificado
+                        candidates = event_data.get("candidates", [])
+                        print(f"[DEBUG] Número de candidatos no evento: {len(candidates)}")
+                        for candidate in candidates:
                             content = candidate.get("content", {})
-                            role = content.get("role", "unknown")
                             parts = content.get("parts", [])
-                            print(f"[DEBUG] Candidato #{candidate_count} - Role: {role}, Partes: {len(parts)}")
+                            print(f"[DEBUG] Candidato - Partes: {len(parts)}")
 
-                            for j, part in enumerate(parts):
-                                print(f"[DEBUG] Processando parte #{j+1} do candidato #{candidate_count}")
+                            for part in parts:
                                 # Procurar por dados de imagem inline_data
                                 if "inline_data" in part:
                                     inline_data = part["inline_data"]
                                     image_data_b64 = inline_data.get("data")
-                                    mime_type = inline_data.get("mime_type", "image/png")
-                                    print(f"[INFO] Imagem encontrada no candidato #{candidate_count}, parte #{j+1}. Mime-type: {mime_type}")
+                                    mime_type_detected = inline_data.get("mime_type", "image/png")
+                                    print(f"[INFO] Imagem encontrada no stream SSE. Mime-type: {mime_type_detected}")
                                     if image_data_b64:
                                         image_data_buffers.append(image_data_b64)
                                         print(f"[INFO] Tamanho acumulado dos dados da imagem: {len(''.join(image_data_buffers))} caracteres base64")
@@ -166,34 +166,17 @@ def process_image():
                                     accumulated_text += text_chunk
                                     print(f"[INFO] Texto acumulado (últimos 50 chars): {accumulated_text[-50:] if accumulated_text else ''}")
 
-                        # Verificar se terminou
-                        # if "finishReason" in candidate: # Verificar finishReason em cada candidato pode não ser ideal
-                        #     finish_reason = candidate["finishReason"]
-                        #     print(f"[INFO] Motivo de término: {finish_reason}")
-                        #     finished = True
+                        # Resetar o acumulador para o próximo evento
+                        accumulated_event_data = ""
 
                     except json.JSONDecodeError as e:
-                        print(f"[ERRO] Erro ao decodificar conteúdo JSON do SSE na linha #{line_index}: {e}")
-                        print(f"[DEBUG] Conteúdo problemático: {json_data_str[:100]}...")
-                        continue # Ignorar linhas com erro de JSON
-
-                # Verificar se o evento terminou (\n\n) - O iter_lines já lida com isso
-                # O requests.iter_lines divide por \n, então cada 'line' é uma linha individual.
-                # O SSE usa \n\n para delimitar eventos. O iter_lines entregará linhas vazias
-                # entre eventos, mas como estamos checando 'if line:', pulamos linhas vazias.
-                # Portanto, o loop continua normalmente para cada linha ''.
-
-            else:
-                # Linha vazia (\n) indica o fim de um evento SSE
-                # Podemos usar isso se necessário, mas o iter_lines já separa corretamente.
-                print(f"[DEBUG] Linha vazia encontrada na iteração #{line_index} (fim de evento SSE?)")
-                pass
-
+                        print(f"[ERRO] Erro ao decodificar evento JSON acumulado: {e}")
+                        print(f"[DEBUG] Conteúdo problemático (primeiros 100 chars): {accumulated_event_data[:100]}...")
+                        # Resetar o acumulador para evitar loops infinitos com dados corrompidos
+                        accumulated_event_data = ""
+                        continue # Ignorar este evento com erro e continuar com o próximo
 
         print("[INFO] Processamento do stream SSE concluído.")
-        print(f"[DEBUG] Total de candidatos processados: {candidate_count}")
-        print(f"[DEBUG] Tamanho final de image_data_buffers: {len(image_data_buffers)}")
-        print(f"[DEBUG] Tamanho final de accumulated_text: {len(accumulated_text)}")
 
 
         # 7. Verificar se a imagem foi encontrada OU texto foi acumulado
@@ -212,9 +195,9 @@ def process_image():
 
                 # Determinar extensão para filename sugerido
                 file_extension = ".png"
-                if mime_type == "image/jpeg":
+                if mime_type_detected == "image/jpeg":
                     file_extension = ".jpg"
-                elif mime_type == "image/gif":
+                elif mime_type_detected == "image/gif":
                     file_extension = ".gif"
                 # Adicione mais conforme necessário
 
@@ -230,7 +213,7 @@ def process_image():
                 print(f"[INFO] Enviando imagem como resposta. Headers: {response_headers}")
                 return Response(
                     image_buffer.getvalue(),
-                    mimetype=mime_type,
+                    mimetype=mime_type_detected,
                     headers=response_headers
                 )
             except Exception as e:
@@ -247,8 +230,8 @@ def process_image():
             # Nenhum dado de imagem ou texto significativo encontrado
             print("[ERRO] Nenhuma imagem ou texto útil encontrado no stream SSE.")
             # Adicione logs específicos sobre o que estava vazio
-            print(f"[DEBUG] Estado final - image_data_buffers: {image_data_buffers}")
-            print(f"[DEBUG] Estado final - accumulated_text: '{accumulated_text}'")
+            print(f"[DEBUG] Estado final - image_data_buffers: {len(image_data_buffers)} partes")
+            print(f"[DEBUG] Estado final - accumulated_text: '{accumulated_text[:100] if accumulated_text else ''}'")
             return jsonify({"error": "Falha ao extrair a imagem ou texto gerado da resposta da API Stream"}), 500
 
 
