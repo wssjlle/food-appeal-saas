@@ -107,7 +107,7 @@ def process_image():
             print(f"[ERRO] Gemini API (Stream): {error_msg}") # Log server-side
             return jsonify({"error": error_msg}), response.status_code
 
-                print("[INFO] Iniciando processamento do stream SSE...")
+            print("[INFO] Iniciando processamento do stream SSE...")
 
         # 6. Processar o stream SSE corretamente
         # A resposta é um stream de eventos Server-Sent Events (SSE).
