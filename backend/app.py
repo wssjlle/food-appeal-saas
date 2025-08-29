@@ -6,7 +6,7 @@ import base64
 import json
 import requests
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify, Response, send_file
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 
 # Carregar variáveis de ambiente
@@ -53,32 +53,31 @@ def process_image():
         image_bytes = image_file.read()
         if not image_bytes:
              return jsonify({"error": "Imagem vazia ou inválida"}), 400
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
-        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG se não especificado
+        image_base64 = base64.b64decode(base64.b64encode(image_bytes).decode('utf-8')) # Ensure it's bytes
+        mime_type = image_file.content_type or "image/jpeg" # Assume JPEG if not specified
 
         # 3. Montar payload para o Gemini streamGenerateContent
-        payload = {
+        # Usando dicionário Python para construir o JSON
+        payload_dict = {
             "contents": [
                 {
                     "role": "user",
                     "parts": [
                         {
-                            # Imagem de entrada
                             "inline_data": {
                                 "mime_type": mime_type,
-                                "data": image_base64
+                                # Enviamos os bytes diretamente, requests cuidará do base64
+                                "data": base64.b64encode(image_bytes).decode('utf-8')
                             }
                         },
                         {
-                            # Prompt de texto
                             "text": prompt_text
                         }
                     ]
                 }
             ],
-            # Configuração para pedir resposta em imagem e texto (opcional)
             "generation_config": {
-                "response_modalities": ["IMAGE", "TEXT"] # Pedir especificamente imagem e texto
+                "response_modalities": ["IMAGE", "TEXT"]
             }
         }
 
@@ -88,7 +87,7 @@ def process_image():
         # Usar requests.post com stream=True para receber o conteúdo em partes
         response = requests.post(
             GEMINI_STREAM_URL,
-            json=payload,
+            json=payload_dict, # Passar o dicionário, requests converte para JSON
             headers=headers,
             timeout=90, # Timeout maior para geração de imagem
             stream=True # MUITO IMPORTANTE para stream
@@ -106,56 +105,91 @@ def process_image():
             print(f"[ERRO] Gemini API (Stream): {error_msg}") # Log server-side
             return jsonify({"error": error_msg}), response.status_code
 
-        # 6. Processar o stream corretamente
+        print("[INFO] Iniciando processamento do stream SSE...")
+
+        # 6. Processar o stream SSE corretamente
         # A resposta é um stream de eventos Server-Sent Events (SSE).
-        # Cada 'chunk' é uma linha JSON.
+        # Cada evento tem um formato: "data: <conteúdo JSON>\n\n"
+        # Precisamos iterar e acumular os dados até encontrar "\n\n"
+
+        full_sse_event_data = ""
+        image_data_buffers = [] # Lista para acumular partes da imagem se necessário
         accumulated_text = ""
-        full_image_data_b64 = ""
+        finished = False
 
-        print("[INFO] Iniciando processamento do stream...")
-
-        # Iterar sobre as linhas da resposta (chunks)
-        # response.iter_lines() é a maneira correta de lidar com SSE/NDJSON
         for line in response.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
-                # Log para depuração (opcional, pode ser removido)
-                # print(f"[DEBUG] Linha recebida (primeiros 100 chars): {decoded_line[:100]}...")
-                try:
-                    # Parsear cada linha como JSON
-                    chunk_data = json.loads(decoded_line)
+                # print(f"[DEBUG] Linha recebida: {decoded_line}")
 
-                    # Verificar se há candidatos
-                    candidates = chunk_data.get("candidates", [])
-                    for candidate in candidates:
-                        content = candidate.get("content", {})
-                        parts = content.get("parts", [])
-                        for part in parts:
-                            # Procurar por dados de imagem inline_data
-                            if "inline_data" in part:
-                                inline_data = part["inline_data"]
-                                image_data_b64 = inline_data.get("data")
-                                mime_type = inline_data.get("mime_type", "image/png")
-                                print("[INFO] Imagem encontrada no stream.")
-                                if image_data_b64:
-                                     full_image_data_b64 += image_data_b64
-                                     print(f"[INFO] Tamanho acumulado dos dados da imagem: {len(full_image_data_b64)} caracteres base64")
+                if decoded_line.startswith("data:"):
+                    # Extrair o conteúdo JSON após "data:"
+                    json_data_str = decoded_line[5:].strip() # Remove "data:" e espaços
+                    # print(f"[DEBUG] Conteúdo JSON extraído: {json_data_str[:100]}...")
 
-                            # Acumular texto, se houver (fallback)
-                            if "text" in part:
-                                 accumulated_text += part["text"]
-                                 print(f"[INFO] Texto acumulado: {accumulated_text}")
+                    try:
+                        # Decodificar o conteúdo como JSON
+                        chunk_data = json.loads(json_data_str)
+                        # print(f"[DEBUG] Chunk JSON decodificado com sucesso.")
 
-                except json.JSONDecodeError as e:
-                    print(f"[ERRO] Erro ao decodificar chunk JSON: {e}")
-                    print(f"[DEBUG] Linha problemática (primeiros 100 chars): {decoded_line[:100]}...")
-                    # Continuar iterando mesmo com erro em um chunk
-                    continue # Ignorar linhas que não são JSON válidos
+                        # Verificar se há candidatos
+                        candidates = chunk_data.get("candidates", [])
+                        for candidate in candidates:
+                            content = candidate.get("content", {})
+                            parts = content.get("parts", [])
+                            for part in parts:
+                                # Procurar por dados de imagem inline_data
+                                if "inline_data" in part:
+                                    inline_data = part["inline_data"]
+                                    image_data_b64 = inline_data.get("data")
+                                    mime_type = inline_data.get("mime_type", "image/png")
+                                    print("[INFO] Imagem encontrada no stream SSE.")
+                                    if image_data_b64:
+                                        image_data_buffers.append(image_data_b64)
+                                        print(f"[INFO] Tamanho acumulado dos dados da imagem: {len(''.join(image_data_buffers))} caracteres base64")
 
-        print("[INFO] Processamento do stream concluído.")
+                                # Acumular texto, se houver (fallback)
+                                if "text" in part:
+                                    text_chunk = part["text"]
+                                    accumulated_text += text_chunk
+                                    print(f"[INFO] Texto acumulado: {accumulated_text[-50:]}...") # Mostra últimos 50 chars
+
+                        # Verificar se terminou
+                        if "finishReason" in candidate:
+                            finish_reason = candidate["finishReason"]
+                            print(f"[INFO] Motivo de término: {finish_reason}")
+                            finished = True
+
+                    except json.JSONDecodeError as e:
+                        print(f"[ERRO] Erro ao decodificar conteúdo JSON do SSE: {e}")
+                        print(f"[DEBUG] Conteúdo problemático: {json_data_str[:100]}...")
+                        continue # Ignorar linhas com erro de JSON
+
+                # Verificar se o evento terminou (\n\n) - O iter_lines já lida com isso
+                # O requests.iter_lines divide por \n, então cada 'line' é uma linha individual.
+                # O SSE usa \n\n para delimitar eventos. O iter_lines entregará linhas vazias
+                # entre eventos, mas como estamos checando 'if line:', pulamos linhas vazias.
+                # Portanto, o loop continua normalmente para cada linha 'data:'.
+
+            else:
+                # Linha vazia (\n) indica o fim de um evento SSE
+                # Podemos usar isso se necessário, mas o iter_lines já separa corretamente.
+                pass
+
+            # Critério de parada: Se encontramos dados de imagem, podemos parar de processar
+            # ou continuar para pegar todo o texto. Vamos parar ao encontrar a imagem.
+            # Ajuste conforme a necessidade.
+            # if image_data_buffers:
+            #     print("[INFO] Imagem encontrada, parando o processamento do stream.")
+            #     break
+
+
+        print("[INFO] Processamento do stream SSE concluído.")
 
         # 7. Verificar se a imagem foi encontrada OU texto foi acumulado
-        if full_image_data_b64:
+        if image_data_buffers:
+            # Concatenar todas as partes da imagem (se houver mais de uma)
+            full_image_data_b64 = "".join(image_data_buffers)
             try:
                 print("[INFO] Tentando decodificar os dados da imagem...")
                 # Decodificar os dados base64 da imagem COMPLETA
@@ -199,7 +233,7 @@ def process_image():
             })
         else:
             # Nenhum dado de imagem ou texto significativo encontrado
-            print("[ERRO] Nenhuma imagem ou texto útil encontrado no stream.")
+            print("[ERRO] Nenhuma imagem ou texto útil encontrado no stream SSE.")
             return jsonify({"error": "Falha ao extrair a imagem ou texto gerado da resposta da API Stream"}), 500
 
     except requests.exceptions.Timeout:
