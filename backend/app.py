@@ -21,9 +21,7 @@ MODEL_ID = "gemini-2.0-flash-preview-image-generation"
 # Construa a URL correta para streamGenerateContent
 GEMINI_STREAM_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:streamGenerateContent?key={GEMINI_API_KEY}"
 
-@app.route('/')
-def home():
-    return jsonify({"message": "FoodAppeal API - Imagens que Vendem"})
+# ... (rotas anteriores) ...
 
 @app.route('/process', methods=['POST'])
 def process_image():
@@ -104,15 +102,17 @@ def process_image():
         # Cada 'chunk' é uma linha JSON.
         image_data_b64 = None
         accumulated_text = ""
+        full_response_data = [] # Armazenar chunks para depuração se necessário
 
         # Iterar sobre as linhas da resposta (chunks)
         for line in response.iter_lines():
             if line:
                 decoded_line = line.decode('utf-8')
+                full_response_data.append(decoded_line) # Armazenar para depuração
                 try:
                     # Parsear cada linha como JSON
                     chunk_data = json.loads(decoded_line)
-                    
+
                     # Verificar se há candidatos
                     candidates = chunk_data.get("candidates", [])
                     for candidate in candidates:
@@ -130,9 +130,9 @@ def process_image():
                             break
                     if image_data_b64:
                         break
-                    
+
                     # Acumular texto, se houver (fallback)
-                    if not image_data_b64:
+                    if not image_data_b64: # Só acumula texto se imagem ainda não foi encontrada
                          for candidate in candidates:
                             content = candidate.get("content", {})
                             parts = content.get("parts", [])
@@ -145,12 +145,12 @@ def process_image():
                     print(f"[DEBUG] Linha problemática: {decoded_line}")
                     continue # Ignorar linhas que não são JSON válidos
 
-        # 7. Verificar se a imagem foi encontrada
+        # 7. Verificar se a imagem foi encontrada OU texto foi acumulado
         if image_data_b64:
             try:
                 # Decodificar os dados base64 da imagem
                 image_bytes = base64.b64decode(image_data_b64)
-                
+
                 # Criar um buffer de BytesIO
                 image_buffer = io.BytesIO(image_bytes)
                 image_buffer.seek(0) # Voltar ao início do buffer
@@ -178,20 +178,21 @@ def process_image():
                 )
             except Exception as e:
                 print(f"[ERRO] Erro ao decodificar ou enviar a imagem: {e}")
+                # Logar os dados brutos para depuração em caso de erro de decodificação
+                # print(f"[DEBUG] Dados da imagem (primeiros 100 chars): {image_data_b64[:100] if image_data_b64 else 'None'}")
                 return jsonify({"error": "Erro ao processar a imagem gerada"}), 500
+        elif accumulated_text.strip():
+            print(f"[INFO] Resposta de texto recebida (sem imagem): {accumulated_text}")
+            return jsonify({
+                "status": "success",
+                "message": "Processamento concluído, mas nenhuma imagem foi gerada conforme solicitado.",
+                "texto": accumulated_text.strip()
+            })
         else:
-            # Se não encontrou imagem, mas tem texto acumulado
-            if accumulated_text.strip():
-                print(f"[INFO] Resposta de texto recebida (sem imagem): {accumulated_text}")
-                return jsonify({
-                    "status": "success",
-                    "message": "Processamento concluído, mas nenhuma imagem foi gerada conforme solicitado.",
-                    "texto": accumulated_text.strip()
-                })
-            else:
-                # Nenhum dado de imagem ou texto significativo encontrado
-                print("[ERRO] Nenhum dado de imagem ou texto útil encontrado no stream.")
-                return jsonify({"error": "Falha ao extrair a imagem ou texto gerado da resposta da API Stream"}), 500
+            # Nenhum dado de imagem ou texto significativo encontrado
+            # Logar os dados brutos da resposta para depuração
+            print(f"[ERRO] Nenhum dado de imagem ou texto útil encontrado no stream. Dados brutos recebidos: {full_response_data[:2]}") # Mostrar apenas os 2 primeiros chunks
+            return jsonify({"error": "Falha ao extrair a imagem ou texto gerado da resposta da API Stream"}), 500
 
     except requests.exceptions.Timeout:
         return jsonify({"error": "Tempo limite excedido ao chamar API do Gemini"}), 500
@@ -202,6 +203,7 @@ def process_image():
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
 
 # ... (restante do app.py e if __name__ == '__main__': ...)
+
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
