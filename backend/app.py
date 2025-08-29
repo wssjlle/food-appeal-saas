@@ -1,27 +1,34 @@
 # -*- coding: utf-8 -*-
-# ... (imports e setup anteriores permanecem os mesmos) ...
-import io # Importar io para manipular buffers binários
-from flask import Flask, request, jsonify, send_file, Response # Importar send_file e Response para retornar arquivos e streams
-from flask_cors import CORS
-import json
-import base64
-import requests
+# Importações
+import io
 import os
+import base64
+import json
+import requests
 from dotenv import load_dotenv
+from flask import Flask, request, jsonify, Response, send_file
+from flask_cors import CORS
 
-
+# Carregar variáveis de ambiente
 load_dotenv()
 
+# Inicializar Flask app
 app = Flask(__name__)
 CORS(app)
 
+# Obter a chave da API do Gemini das variáveis de ambiente
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# Use o modelo correto
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY não está definida nas variáveis de ambiente.")
+
+# Modelo e URL da API
 MODEL_ID = "gemini-2.0-flash-preview-image-generation"
-# Construa a URL correta para streamGenerateContent
 GEMINI_STREAM_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_ID}:streamGenerateContent?key={GEMINI_API_KEY}"
 
-# ... (rotas anteriores) ...
+@app.route('/')
+def home():
+    """Endpoint raiz para verificar se o serviço está online."""
+    return jsonify({"message": "FoodAppeal API - Imagens que Vendem", "status": "online"})
 
 @app.route('/process', methods=['POST'])
 def process_image():
@@ -44,6 +51,8 @@ def process_image():
 
         # 2. Converter imagem para base64
         image_bytes = image_file.read()
+        if not image_bytes:
+             return jsonify({"error": "Imagem vazia ou inválida"}), 400
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
         mime_type = image_file.content_type or "image/jpeg" # Assume JPEG se não especificado
 
@@ -98,10 +107,12 @@ def process_image():
             return jsonify({"error": error_msg}), response.status_code
 
         # 6. Processar o stream corretamente
-        # A resposta é um stream de eventos Server-Sent Events (SSE) ou NDJSON.
+        # A resposta é um stream de eventos Server-Sent Events (SSE).
         # Cada 'chunk' é uma linha JSON.
         accumulated_text = ""
-        image_data_b64 = None
+        full_image_data_b64 = ""
+
+        print("[INFO] Iniciando processamento do stream...")
 
         # Iterar sobre as linhas da resposta (chunks)
         # response.iter_lines() é a maneira correta de lidar com SSE/NDJSON
@@ -109,7 +120,7 @@ def process_image():
             if line:
                 decoded_line = line.decode('utf-8')
                 # Log para depuração (opcional, pode ser removido)
-                # print(f"[DEBUG] Linha recebida: {decoded_line[:100]}...")
+                # print(f"[DEBUG] Linha recebida (primeiros 100 chars): {decoded_line[:100]}...")
                 try:
                     # Parsear cada linha como JSON
                     chunk_data = json.loads(decoded_line)
@@ -121,36 +132,35 @@ def process_image():
                         parts = content.get("parts", [])
                         for part in parts:
                             # Procurar por dados de imagem inline_data
-                            if "inline_data" in part and not image_data_b64:
-                                # Armazena apenas o PRIMEIRO pedaço de imagem encontrado
-                                # para evitar sobrescritas desnecessárias
+                            if "inline_data" in part:
                                 inline_data = part["inline_data"]
                                 image_data_b64 = inline_data.get("data")
                                 mime_type = inline_data.get("mime_type", "image/png")
                                 print("[INFO] Imagem encontrada no stream.")
-                                # Idealmente, paramos aqui, mas continuamos a iterar
-                                # para garantir que não há erros subsequentes.
-                                # break # Removido para continuar processando possíveis erros ou texto
+                                if image_data_b64:
+                                     full_image_data_b64 += image_data_b64
+                                     print(f"[INFO] Tamanho acumulado dos dados da imagem: {len(full_image_data_b64)} caracteres base64")
 
                             # Acumular texto, se houver (fallback)
-                            # Só acumula texto se imagem ainda não foi encontrada OU se for uma resposta de texto pura
                             if "text" in part:
-                                 # Acumula texto mesmo que imagem tenha sido encontrada,
-                                 # pois a resposta pode ter partes de texto e imagem.
-                                 # Mas prioriza a imagem.
-                                accumulated_text += part["text"]
+                                 accumulated_text += part["text"]
+                                 print(f"[INFO] Texto acumulado: {accumulated_text}")
 
                 except json.JSONDecodeError as e:
                     print(f"[ERRO] Erro ao decodificar chunk JSON: {e}")
-                    print(f"[DEBUG] Linha problemática: {decoded_line[:100]}...")
+                    print(f"[DEBUG] Linha problemática (primeiros 100 chars): {decoded_line[:100]}...")
                     # Continuar iterando mesmo com erro em um chunk
                     continue # Ignorar linhas que não são JSON válidos
 
+        print("[INFO] Processamento do stream concluído.")
+
         # 7. Verificar se a imagem foi encontrada OU texto foi acumulado
-        if image_data_b64:
+        if full_image_data_b64:
             try:
-                # Decodificar os dados base64 da imagem
-                image_bytes = base64.b64decode(image_data_b64)
+                print("[INFO] Tentando decodificar os dados da imagem...")
+                # Decodificar os dados base64 da imagem COMPLETA
+                image_bytes = base64.b64decode(full_image_data_b64)
+                print(f"[INFO] Imagem decodificada com sucesso. Tamanho em bytes: {len(image_bytes)}")
 
                 # Criar um buffer de BytesIO
                 image_buffer = io.BytesIO(image_bytes)
@@ -200,7 +210,6 @@ def process_image():
         print(f"[ERRO] Interno: {str(e)}") # Log detalhado do erro
         return jsonify({"error": f"Erro interno: {str(e)}"}), 500
 
-# ... (restante do app.py e if __name__ == '__main__': ...)
-
+# Executar o aplicativo se este arquivo for executado diretamente
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
